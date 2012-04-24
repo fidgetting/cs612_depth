@@ -1,0 +1,199 @@
+/*
+ * main.cpp
+ *
+ *  Created on: Feb 14, 2012
+ *      Author: norton
+ */
+
+/* local includes */
+#include <ground.h>
+#include <super.h>
+#include <util.h>
+#include <knearest.h>
+
+/* std library */
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <vector>
+
+/* open cv */
+#include <opencv2/opencv.hpp>
+
+/* boost includes */
+#include <boost/program_options.hpp>
+namespace po = boost::program_options;
+#include <boost/filesystem.hpp>
+namespace fs = boost::filesystem;
+#include <boost/timer.hpp>
+
+#define MODEL_R depth::knearest
+#define MODEL_P depth::knearest
+
+int main(int argc, char** argv) {
+  std::vector<std::string> file_list;
+  std::vector<std::string> video_list;
+  std::shared_ptr<MODEL_R> m_region;
+  std::shared_ptr<MODEL_P> m_pair;
+  po::options_description opt("Options");
+  po::variables_map vm;
+  std::string directory;
+  std::string truth;
+  std::string model;
+  boost::timer watch;
+  bool p_help  = false;
+  bool m_truth = false;
+
+  /* parameters for the region classifier */
+  CvSVMParams   region_p;
+
+  region_p.kernel_type = CvSVM::RBF;
+  region_p.degree = pow(2,  5);
+  region_p.C      = pow(2, -5);
+
+  /* parameters for paired classifier */
+  CvBoostParams pair_p;
+
+  pair_p.boost_type     = CvBoost::DISCRETE;
+  pair_p.split_criteria = CvBoost::DEFAULT;
+
+  opt.add_options()
+      ("help,h",
+        "produce help message")
+      ("video,v",
+        po::value<std::vector<std::string> >(&video_list),
+        "analyze this video")
+      ("file,f",
+        po::value<std::vector<std::string> >(&file_list),
+        "analyze this file")
+      ("directory,d",
+        po::value<std::string>(&directory)->default_value(""),
+        "analyze all the files in this directory")
+      ("truth,t",
+        po::value<std::string>(&truth)->default_value(""),
+        "load ground truth information from this file")
+      ("make,m",
+        "make the group truth maps")
+      ("model,M",
+        po::value<std::string>(&model)->default_value(""),
+        "the file that the trained model is saved in");
+
+
+  po::store(po::command_line_parser(argc, argv).options(opt).run(), vm);
+  po::notify(vm);
+
+  if((p_help = vm.count("help"))) {
+    opt.print(std::cout);
+    return 0;
+  }
+
+  m_truth = vm.count("make");
+
+  std::vector<std::shared_ptr<depth::ground_truth> > samples;
+  if(truth.length() != 0) {
+    std::cout << "LOAD:" << std::endl;
+    fs::path src_dir(truth.substr(0, truth.find(':')));
+    fs::path dst_dir(truth.substr(truth.find(':') + 1));
+
+    for(auto iter = fs::directory_iterator(src_dir);
+        iter != fs::directory_iterator(); iter++) {
+      fs::path curr = (*iter).path();
+      fs::path save = dst_dir / fs::basename(curr);
+
+      if(m_truth) {
+        if(!fs::is_regular_file(save)) {
+          std::shared_ptr<depth::processed_image> img =
+              std::make_shared<depth::processed_image>(curr.string());
+          depth::ground_truth ground(img);
+
+          ground.display();
+
+          std::ofstream ostr(save.string());
+          ostr << save << " ";
+          for(depth::ground_truth::label l : ground.labels()) {
+            ostr << int(l) << " ";
+          }
+        }
+      } else {
+        if(fs::is_regular_file(save)) {
+          std::cout << "load: " << curr << std::flush;
+          watch.restart();
+          std::shared_ptr<depth::processed_image> img =
+              std::make_shared<depth::processed_image>(curr.string());
+          samples.push_back(
+              std::make_shared<depth::ground_truth>(img, save));
+          std::cout << " " << watch.elapsed() << std::endl;
+        }
+      }
+    }
+
+    if(samples.size() == 0) {
+      return 0;
+    }
+  }
+
+  fs::path region_f(model.substr(0, model.find(':')));
+  fs::path pair_f(model.substr(model.find(':') + 1));
+
+  if(samples.size() != 0) {
+    std::cout << "\nTRAINING: region" << std::flush;
+    watch.restart();
+    m_region = depth::train_region<MODEL_R>(samples, region_p);
+    m_region->save(region_f.c_str(), "region");
+    std::cout << " " << watch.elapsed() << std::endl;
+
+    std::cout << "TRAINING: pair" << std::flush;
+    watch.restart();
+    m_pair = depth::train_pair<MODEL_P>(samples, pair_p);
+    m_pair->save(pair_f.c_str(), "pair");
+    std::cout << " " << watch.elapsed() << "\n" << std::endl;
+
+  } else {
+    m_region = std::make_shared<MODEL_R>();
+    m_region->load(region_f.c_str(), "region");
+
+    m_pair = std::make_shared<MODEL_P>();
+    m_pair->load(pair_f.c_str(), "pair");
+  }
+
+  /*if(directory.size() != 0) {
+    for(auto iter = fs::directory_iterator(directory);
+        iter != fs::directory_iterator(); iter++) {
+      depth::processed_image pi((*iter).path().c_str());
+
+      pi.display(-1);
+    }
+  }*/
+
+  if(file_list.size() != 0) {
+    for(std::string& str : file_list) {
+      depth::processed_image pi(str);
+
+      pi.predict(m_region);
+      //pi.pair(m_pair);
+      pi.display();
+    }
+  }
+
+  /*for(std::string& str : video_list) {
+    cv::Mat src;
+    cv::VideoCapture vid(str);
+    cv::Size frame_size(
+        vid.get(CV_CAP_PROP_FRAME_HEIGHT),
+        vid.get(CV_CAP_PROP_FRAME_WIDTH));
+
+    cv::VideoWriter out("output.avi",
+        CV_FOURCC('D', 'I', 'V', 'X'),
+        vid.get(CV_CAP_PROP_FPS),
+        frame_size);
+
+
+
+    for(boost::thread&t : workers) {
+      t.join();
+    }
+  }*/
+
+  return 0;
+}
+
