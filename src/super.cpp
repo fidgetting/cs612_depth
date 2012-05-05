@@ -29,7 +29,7 @@ bool operator<(std::pair<int, int> lhs, std::pair<int, int> rhs) {
 depth::super_pixel::super_pixel(const processed_image* src) :
     _src(src), _sp_num(-1), _n_pix(0), _mean_r(0), _mean_g(0), _mean_b(0),
     _mean_hue(0), _mean_sat(0), _hist_hue(hue_buckets), _hist_sat(sat_buckets),
-    _mean_x(0), _mean_y(0), _laws_resp(law_buckets) { }
+    _mean_x(0), _mean_y(0), _laws_resp(law_buckets), _grad_hist(gra_buckets) { }
 
 /**
  * TODO
@@ -40,7 +40,7 @@ depth::super_pixel::super_pixel(const processed_image* src) :
 depth::super_pixel::super_pixel(const processed_image* src, int32_t sp_num) :
     _src(src), _sp_num(sp_num), _n_pix(0), _mean_r(0), _mean_g(0), _mean_b(0),
     _mean_hue(0), _mean_sat(0), _hist_hue(hue_buckets), _hist_sat(sat_buckets),
-    _mean_x(0), _mean_y(0), _laws_resp(law_buckets) {
+    _mean_x(0), _mean_y(0), _laws_resp(law_buckets), _grad_hist(gra_buckets) {
 
   /* do the easy stuff first:
    *   mean      red, green, blue
@@ -307,6 +307,7 @@ depth::processed_image::processed_image(const std::string& image_name) :
   }
 
   comp_laws();
+  comp_grad();
 }
 
 /**
@@ -433,6 +434,33 @@ void depth::processed_image::comp_laws() {
 
   for(super_pixel& sp : _sps) {
     for(double& d : sp.laws_resp()) {
+      d /= sp.n_pix();
+    }
+  }
+}
+
+void depth::processed_image::comp_grad() {
+  cv::Mat dx, dy, gray;
+
+  gray = cv::Mat::zeros(_source.size(), CV_64FC1);
+  std::transform(_source.begin<cv::Vec3b>(), _source.end<cv::Vec3b>(),
+      gray.begin<double>(), [](cv::Vec3b& pix)
+      { return (double(pix[0]) + double(pix[1]) + double(pix[2])) / 3.0; } );
+  cv::Sobel(gray, dx, -1, 1, 0);
+  cv::Sobel(gray, dy, -1, 0, 1);
+
+  for(int i = 0; i < _source.rows; i++) {
+    for(int j = 0; j < _source.cols; j++) {
+      int bucket = round(((atan(dy.at<double>(i, j) /
+          (dx.at<double>(i, j) + EPSILON)) + (PI / 2.0)) / PI) *
+          super_pixel::gra_buckets);
+
+      _sps[_segment.at<int>(i, j)].grad_hist()[bucket]++;
+    }
+  }
+
+  for(super_pixel& sp : _sps) {
+    for(double& d : sp.grad_hist()) {
       d /= sp.n_pix();
     }
   }

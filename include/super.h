@@ -32,8 +32,10 @@ namespace depth {
       const static int hue_buckets = 5;
       const static int sat_buckets = 3;
       const static int law_buckets = 9;
+      const static int gra_buckets = 10;
 
-      const static int n_dim = base + hue_buckets + sat_buckets + law_buckets;
+      const static int n_dim = base + hue_buckets + sat_buckets + law_buckets
+          + gra_buckets;
 
       super_pixel(const processed_image* src);
       super_pixel(const processed_image* src, int32_t _sp_num);
@@ -58,6 +60,8 @@ namespace depth {
 
       inline       std::vector<double>& laws_resp()       { return _laws_resp; }
       inline const std::vector<double>& laws_resp() const { return _laws_resp; }
+      inline       std::vector<double>& grad_hist()       { return _grad_hist; }
+      inline const std::vector<double>& grad_hist() const { return _grad_hist; }
 
     protected:
 
@@ -84,6 +88,7 @@ namespace depth {
 
       /* geometry */
       std::vector<double> _laws_resp;
+      std::vector<double> _grad_hist;
   };
 
   std::set<super_pixel> get_super(processed_image& src);
@@ -138,6 +143,7 @@ namespace depth {
       void display(int delay = -1);
 
       void comp_laws();
+      void comp_grad();
 
       inline bool valid() { return _source.data != NULL; }
 
@@ -194,6 +200,7 @@ namespace depth {
       super_pixel pix(this, i);
 
       pix.pack(input);
+      std::cout << i << " => ";
       labels[i] = int(model->predict(input));
     }
 

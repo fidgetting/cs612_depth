@@ -52,6 +52,8 @@ namespace depth {
       std::vector<label> _labels;
   };
 
+#define KNEAR 3
+
   /**
    * TODO
    *
@@ -75,7 +77,9 @@ namespace depth {
 
     for(const std::shared_ptr<ground_truth>& g : train_data) {
       for(const super_pixel& sp : g->get_img()->sps()) {
-        respo_mat.at<int>(curr_row) = int(g->at(sp.sp_num()));
+        int type = g->at(sp.sp_num());
+        respo_mat.at<int>(curr_row) =
+            type == 0 || type == 1 ? 1 : 2;
 
         cv::Mat row = train_mat.row(curr_row++);
 
@@ -89,7 +93,7 @@ namespace depth {
     CvMat respo = respo_mat;
 
     return std::shared_ptr<model_t>(
-        new model_t(train_mat, respo_mat, 1));
+        new model_t(train_mat, respo_mat, KNEAR));
     /*return std::shared_ptr<model_t>(
         new model_t(&train, &respo, 0, 0, params));*/
   }
@@ -153,7 +157,7 @@ namespace depth {
     CvMat respo = respo_mat;
 
     return std::shared_ptr<model_t>(
-        new model_t(train_mat, respo_mat, 1));
+        new model_t(train_mat, respo_mat, KNEAR));
     /*return std::shared_ptr<model_t>(
         new model_t(&train, CV_ROW_SAMPLE, &respo, NULL, NULL, NULL, NULL,
             params));*/

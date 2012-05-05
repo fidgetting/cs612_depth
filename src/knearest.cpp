@@ -94,7 +94,7 @@ float depth::knearest::predict(cv::Mat& point) {
   int max = 0;
 
   for(int i = 0; i < _k; i++) {
-    std::pair<int, double> pair(-1, DBL_MAX_EXP);
+    std::pair<int, double> pair(-1, DBL_MAX);
     best.push_back(pair);
   }
 
