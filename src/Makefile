@@ -25,9 +25,12 @@ HEAD = Makefile              \
        $(INC_DIR)/ground.h   \
        $(INC_DIR)/knearest.h
 
-all: $(EXE)
+all: $(BIN_DIR) $(EXE)
 $(EXE): $(OBJS) $(BIN_DIR)/*.o $(HEAD)
 	$(CXX) -o $(EXE) $(BIN_DIR)/*.o $(LIBS)
+
+$(BIN_DIR):
+	mkdir $(BIN_DIR)
 
 $(OBJS): $(BIN_DIR)/%.o: %.cpp $(HEAD)
 	@echo "    build" $<

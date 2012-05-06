@@ -12,7 +12,11 @@ OBJS = $(BIN_DIR)/convolve.o      \
        $(BIN_DIR)/imconv.o        \
        $(BIN_DIR)/segment-image.o \
 
-all: $(OBJS)
+all: $(BIN_DIR) $(OBJS)
+
+$(BIN_DIR):
+	mkdir $(BIN_DIR)
+
 $(OBJS): $(BIN_DIR)/%.o: %.cpp
 	@echo "    build" $<
 	$(CXX) -c $(DEF) $(INCPATH) $(CFLAGS) $< -o $@ 

@@ -52,7 +52,7 @@ namespace depth {
       std::vector<label> _labels;
   };
 
-#define KNEAR 3
+#define KNEAR 1
 
   /**
    * TODO
@@ -76,26 +76,35 @@ namespace depth {
     cv::Mat respo_mat(total_pix, 1, CV_32SC1);
 
     for(const std::shared_ptr<ground_truth>& g : train_data) {
-      for(const super_pixel& sp : g->get_img()->sps()) {
+      for(super_pixel& sp : g->get_img()->sps()) {
+        depth::region re(g->get_img().get());
+
+        re.push(sp);
+        for(int i = 0; i < g->get_img()->npixels(); i++) {
+          if(g->get_img()->adj_mat().at<uint8_t>(sp.sp_num(), i)) {
+            if(g->at(sp.sp_num()) == g->at(i)) {
+              re.push(g->get_img()->sps()[i]);
+            }
+          }
+        }
+
         int type = g->at(sp.sp_num());
         respo_mat.at<int>(curr_row) =
-            type == 0 || type == 1 ? 1 : 2;
+            type == 0 || type == 1 ? -1 : 1;
 
         cv::Mat row = train_mat.row(curr_row++);
 
-        sp.pack(row);
+        re.pack(row);
       }
     }
-
-    respo_mat.at<int>(0, 0) = 0;
 
     CvMat train = train_mat;
     CvMat respo = respo_mat;
 
-    return std::shared_ptr<model_t>(
-        new model_t(train_mat, respo_mat, KNEAR));
     /*return std::shared_ptr<model_t>(
-        new model_t(&train, &respo, 0, 0, params));*/
+        new model_t(train_mat, respo_mat, KNEAR));*/
+    return std::shared_ptr<model_t>(
+        new model_t(&train, CV_ROW_SAMPLE, &respo, 0, 0, 0, 0, params));
   }
 
   /**

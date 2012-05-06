@@ -23,7 +23,7 @@ namespace depth {
       virtual void load(std::string filename, std::string name);
       virtual void save(std::string filename, std::string name);
 
-      virtual float predict(cv::Mat& point);
+      virtual float predict(cv::Mat& point) const;
 
     private:
 

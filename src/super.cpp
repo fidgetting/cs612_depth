@@ -11,6 +11,9 @@
 #include <cmath>
 #include <exception>
 
+using std::placeholders::_1;
+using std::placeholders::_2;
+
 /* ************************************************************************** */
 /* *** super_pixel ********************************************************** */
 /* ************************************************************************** */
@@ -29,7 +32,8 @@ bool operator<(std::pair<int, int> lhs, std::pair<int, int> rhs) {
 depth::super_pixel::super_pixel(const processed_image* src) :
     _src(src), _sp_num(-1), _n_pix(0), _mean_r(0), _mean_g(0), _mean_b(0),
     _mean_hue(0), _mean_sat(0), _hist_hue(hue_buckets), _hist_sat(sat_buckets),
-    _mean_x(0), _mean_y(0), _laws_resp(law_buckets), _grad_hist(gra_buckets) { }
+    _mean_x(0), _mean_y(0), _laws_resp(law_buckets * col_spaces),
+    _grad_hist(gra_buckets * col_spaces) { }
 
 /**
  * TODO
@@ -40,15 +44,18 @@ depth::super_pixel::super_pixel(const processed_image* src) :
 depth::super_pixel::super_pixel(const processed_image* src, int32_t sp_num) :
     _src(src), _sp_num(sp_num), _n_pix(0), _mean_r(0), _mean_g(0), _mean_b(0),
     _mean_hue(0), _mean_sat(0), _hist_hue(hue_buckets), _hist_sat(sat_buckets),
-    _mean_x(0), _mean_y(0), _laws_resp(law_buckets), _grad_hist(gra_buckets) {
+    _mean_x(0), _mean_y(0), _laws_resp(law_buckets * col_spaces),
+    _grad_hist(gra_buckets * col_spaces) {
 
+  std::for_each(_src->segment().begin<int>(), _src->segment().end<int>(),
+      [&](int i){ if(i == _sp_num) _n_pix++; });
+#ifdef INC_COLORLOC
   /* do the easy stuff first:
    *   mean      red, green, blue
    *   mean      hue, saturation
    *   mean      x, y
    *   histogram hue, saturation
    */
-  std::set<std::pair<int, int> > pixels;
   double _row_norm = 1.0 / double(_src->rows());
   double _col_norm = 1.0 / double(_src->cols());
 
@@ -58,8 +65,6 @@ depth::super_pixel::super_pixel(const processed_image* src, int32_t sp_num) :
   for(int i = 0; i < _src->rows(); i++) {
     for(int j = 0; j < _src->cols(); j++) {
       if(_src->segment().at<int>(i, j) == _sp_num) {
-        pixels.insert(std::pair<int, int>(i, j));
-
         _mean_x += j;
         _mean_y += j;
 
@@ -69,14 +74,11 @@ depth::super_pixel::super_pixel(const processed_image* src, int32_t sp_num) :
 
         _mean_hue += hsv.at<cv::Vec3b>(i, j)[0];
         _mean_sat += hsv.at<cv::Vec3b>(i, j)[1];
-
         double hue = (hsv.at<cv::Vec3b>(i, j)[0] / 256.0) * hue_buckets;
         double sat = (hsv.at<cv::Vec3b>(i, j)[1] / 256.0) * sat_buckets;
 
         _hist_hue[int(floor(hue))]++;
         _hist_sat[int(floor(sat))]++;
-
-        _n_pix++;
       }
     }
   }
@@ -93,6 +95,7 @@ depth::super_pixel::super_pixel(const processed_image* src, int32_t sp_num) :
 
   for(double& d : _hist_hue) d /= _n_pix;
   for(double& d : _hist_sat) d /= _n_pix;
+#endif
 }
 
 /**
@@ -100,14 +103,15 @@ depth::super_pixel::super_pixel(const processed_image* src, int32_t sp_num) :
  *
  * @param row
  */
-void depth::super_pixel::pack(cv::Mat& row) const {
+void depth::super_pixel::pack(cv::Mat& row) {
   int idx = base;
 
   if(row.rows != 1 || row.cols != n_dim) {
     throw std::exception();
   }
 
-  row.at<float>(0 ) = _n_pix;
+#ifdef INC_COLORLOC
+  //row.at<float>(0 ) = _n_pix;
   row.at<float>(1 ) = _mean_r;
   row.at<float>(2 ) = _mean_g;
   row.at<float>(3 ) = _mean_b;
@@ -120,6 +124,12 @@ void depth::super_pixel::pack(cv::Mat& row) const {
     row.at<float>(idx++) = _hist_hue[i];
   for(int i = 0; i < sat_buckets; i++)
     row.at<float>(idx++) = _hist_sat[i];
+#endif
+
+  for(int i = 0; i < law_buckets; i++)
+    row.at<float>(idx++) = _laws_resp[i];
+  for(int i = 0; i < gra_buckets; i++)
+    row.at<float>(idx++) = _grad_hist[i];
 }
 
 /**
@@ -195,39 +205,172 @@ depth::region::region(const processed_image* src) :
   super_pixel(src), _subs() { }
 
 /**
+ * TODO
+ *
+ * @param dst
+ */
+void depth::region::pack(cv::Mat& dst) {
+  /* zero everything */
+  _mean_r = _mean_g = _mean_b = 0;
+  _mean_x = _mean_y = 0;
+  _mean_hue = _mean_sat = 0;
+
+  std::for_each(_hist_hue.begin(),  _hist_hue.end(),
+      [] (double& d) { d = 0; } );
+  std::for_each(_hist_sat.begin(),  _hist_sat.end(),
+      [] (double& d) { d = 0; } );
+  std::for_each(_laws_resp.begin(), _laws_resp.end(),
+      [] (double& d) { d = 0; } );
+  std::for_each(_grad_hist.begin(), _grad_hist.end(),
+      [] (double& d) { d = 0; } );
+
+  /* add up everything for average */
+  for(super_pixel& sp : _subs) {
+#ifdef INC_COLORLOV
+    _mean_r += sp.mean_r();
+    _mean_g += sp.mean_g();
+    _mean_b += sp.mean_b();
+    _mean_hue += sp.mean_hue();
+    _mean_sat += sp.mean_sat();
+    _mean_x += sp.mean_x();
+    _mean_y += sp.mean_y();
+
+    comb(sp.hist_hue().begin(), sp.hist_hue().end(), _hist_hue.begin(),
+        [] (const double& src, double& dst) { dst += src; } );
+    comb(sp.hist_sat().begin(), sp.hist_sat().end(), _hist_sat.begin(),
+        [] (const double& src, double& dst) { dst += src; } );
+#endif
+
+    comb(sp.laws_resp().begin(), sp.laws_resp().end(), _laws_resp.begin(),
+        [] (const double& src, double& dst) { dst += src; } );
+    comb(sp.grad_hist().begin(), sp.grad_hist().end(), _grad_hist.begin(),
+        [] (const double& src, double& dst) { dst += src; } );
+
+    _n_pix += sp.n_pix();
+  }
+
+  /* divide through by the number of pixels */
+  _mean_r   /= _subs.size();
+  _mean_g   /= _subs.size();
+  _mean_b   /= _subs.size();
+  _mean_hue /= _subs.size();
+  _mean_sat /= _subs.size();
+  _mean_x   /= _subs.size();
+  _mean_y   /= _subs.size();
+
+  std::for_each(_hist_hue.begin(),  _hist_hue.end(),
+      [&](double& d){ d /= _subs.size(); } );
+  std::for_each(_hist_sat.begin(),  _hist_sat.end(),
+      [&](double& d){ d /= _subs.size(); } );
+  std::for_each(_laws_resp.begin(), _laws_resp.end(),
+      [&](double& d){ d /= _subs.size(); } );
+  std::for_each(_grad_hist.begin(), _grad_hist.end(),
+      [&](double& d){ d /= _subs.size(); } );
+
+  super_pixel::pack(dst);
+}
+
+/**
  * Expands the region to include the new super pixel
  *
  * @param pix  the super pixel to add the region
  */
 void depth::region::push(const super_pixel& pix) {
   _subs.push_back(pix);
+}
 
-  _mean_x   = ((_mean_x   * _n_pix) + pix.mean_x()  ) / (_n_pix + pix.n_pix());
-  _mean_y   = ((_mean_y   * _n_pix) + pix.mean_y()  ) / (_n_pix + pix.n_pix());
-  _mean_r   = ((_mean_r   * _n_pix) + pix.mean_r()  ) / (_n_pix + pix.n_pix());
-  _mean_g   = ((_mean_g   * _n_pix) + pix.mean_g()  ) / (_n_pix + pix.n_pix());
-  _mean_b   = ((_mean_b   * _n_pix) + pix.mean_b()  ) / (_n_pix + pix.n_pix());
-  _mean_hue = ((_mean_hue * _n_pix) + pix.mean_hue()) / (_n_pix + pix.n_pix());
-  _mean_sat = ((_mean_sat * _n_pix) + pix.mean_sat()) / (_n_pix + pix.n_pix());
-
-  auto hue_s = pix.hist_hue().begin();
-  for(auto hue_t = _hist_hue.begin();
-      hue_t != _hist_hue.end(); hue_t++, hue_s++) {
-    *hue_t = ((*hue_t * _n_pix) + *hue_t) / (_n_pix + pix.n_pix());
-  }
-
-  auto sat_s = pix.hist_sat().begin();
-  for(auto sat_t = _hist_sat.begin();
-      sat_t != _hist_sat.end(); sat_t++, sat_s++) {
-    *sat_t = ((*sat_t * _n_pix) + *sat_t) / (_n_pix + pix.n_pix());
-  }
-
-  _n_pix  += pix.n_pix();
+/**
+ * TODO
+ */
+void depth::region::clear() {
+  _subs.clear();
 }
 
 /* ************************************************************************** */
 /* *** processed_image ****************************************************** */
 /* ************************************************************************** */
+
+/**
+ * Processes an image and creates 3 things from it:
+ *   1. a segmented image that will be used to get super pixels
+ *   2. an image that uniquely numbers and maps each super pixel
+ *   3. an adjacency matrix for the super pixels
+ *
+ * @param image_name the file to load the image from
+ */
+depth::processed_image::processed_image(const cv::Mat& img) :
+    _name(""), _source(img.clone()),
+    _spimg  (_source.size(), CV_8UC3),
+    _segment(_source.size(), CV_32SC1),
+    _adj_mat() {
+  cv::Mat dst(_source.size(), CV_32SC1);
+
+  std::map<int, int> idx_map;
+  int idx_gen = 0, x, y;
+
+  /* make sure we can acutally load the image */
+  if(!valid())
+    return;
+
+  /* start by segmenting the image */
+  depth::segment(_source, _spimg);
+
+  /* convert to something that can be easily mapped */
+  std::transform(_spimg.begin<cv::Vec3b>(), _spimg.end<cv::Vec3b>(),
+      dst.begin<int>(), [](const cv::Vec3b& in)
+      { return int(in[0]) + (int(in[1]) << 8) + (int(in[2]) << 16); } );
+
+  /* index the segmentations */
+  for(int i = 0; i < _spimg.rows; i++) {
+    for(int j = 0; j < _spimg.cols; j++) {
+      int curr = dst.at<int>(i, j);
+
+      if(idx_map.find(curr) == idx_map.end()) {
+        idx_map[curr] = idx_gen++;
+      }
+
+      _segment.at<int>(i, j) = idx_map[curr];
+    }
+  }
+
+  /* get the edges for the image */
+  _adj_mat = cv::Mat::eye(idx_map.size(), idx_map.size(), CV_8UC1);
+  for(int i = 1; i < _segment.rows - 1; i++) {
+    for(int j = 1; j < _segment.cols - 1; j++) {
+      int x = _segment.at<int>(i, j);
+      int y;
+
+      if((y = _segment.at<int>(i, j + 1)) != x) {
+        _adj_mat.at<uc>(x, y) = 255;
+        _adj_mat.at<uc>(y, x) = 255;
+      }
+
+      if((y = _segment.at<int>(i, j - 1)) != x) {
+        _adj_mat.at<uc>(x, y) = 255;
+        _adj_mat.at<uc>(y, x) = 255;
+      }
+
+      if((y = _segment.at<int>(i + 1, j)) != x) {
+        _adj_mat.at<uc>(x, y) = 255;
+        _adj_mat.at<uc>(y, x) = 255;
+      }
+
+      if((y = _segment.at<int>(i - 1, j)) != x) {
+        _adj_mat.at<uc>(x, y) = 255;
+        _adj_mat.at<uc>(y, x) = 255;
+      }
+    }
+  }
+
+  for(int i = 0; i < npixels(); i++) {
+    _sps.push_back(super_pixel(this, i));
+  }
+
+  comp_channel(std::bind<void>(&processed_image::comp_laws, this, _1, _2),
+      super_pixel::law_buckets);
+  comp_channel(std::bind<void>(&processed_image::comp_grad, this, _1, _2),
+      super_pixel::gra_buckets);
+}
 
 /**
  * Processes an image and creates 3 things from it:
@@ -306,8 +449,10 @@ depth::processed_image::processed_image(const std::string& image_name) :
     _sps.push_back(super_pixel(this, i));
   }
 
-  comp_laws();
-  comp_grad();
+  comp_channel(std::bind<void>(&processed_image::comp_laws, this, _1, _2),
+      super_pixel::law_buckets);
+  comp_channel(std::bind<void>(&processed_image::comp_grad, this, _1, _2),
+      super_pixel::gra_buckets);
 }
 
 /**
@@ -318,14 +463,62 @@ depth::processed_image::processed_image(const std::string& image_name) :
 void depth::processed_image::display(int delay) {
   if(valid()) {
 
-    cv::namedWindow("segment", CV_WINDOW_AUTOSIZE);
+    //cv::namedWindow("mixed", CV_WINDOW_AUTOSIZE);
+    /*cv::namedWindow("segment", CV_WINDOW_AUTOSIZE);
+    cv::namedWindow("bw"     , CV_WINDOW_AUTOSIZE);
     cvSetMouseCallback("segment", processed_image::mouse_callback, this);
+    cvSetMouseCallback("bw",      processed_image::mouse_callback, this);
 
     cv::imshow("source",  _source);
     cv::imshow("segment", _spimg);
     cv::imshow("bw",      create_bw());
-    cv::imshow("adj",     _adj_mat);
+    cv::imshow("adj",     _adj_mat);*/
+
+    cv::Mat vert = cv::Mat::zeros(_source.size(), CV_8UC3);
+    cv::Mat horz = cv::Mat::zeros(_source.size(), CV_8UC3);
+
+    for(int i = 0; i < _source.rows; i++) {
+      for(int j = 0; j < _source.cols; j++) {
+        if(_spimg.at<cv::Vec3b>(i, j)[1]) {
+          vert.at<cv::Vec3b>(i, j) = _source.at<cv::Vec3b>(i, j);
+        } else {
+          horz.at<cv::Vec3b>(i, j) = _source.at<cv::Vec3b>(i, j);
+        }
+      }
+    }
+
+    cv::imshow("vertical", vert);
+    cv::imshow("horizontal", horz);
+    cv::imshow("source", _source);
+
     cv::waitKey(delay);
+  }
+}
+
+/**
+ * TODO
+ *
+ * @param vert
+ * @param horz
+ */
+void depth::processed_image::write(cv::VideoWriter& vert_v,
+    cv::VideoWriter& horz_v) {
+  if(valid()) {
+    cv::Mat vert = cv::Mat::zeros(_source.size(), CV_8UC3);
+    cv::Mat horz = cv::Mat::zeros(_source.size(), CV_8UC3);
+
+    for(int i = 0; i < _source.rows; i++) {
+      for(int j = 0; j < _source.cols; j++) {
+        if(_spimg.at<cv::Vec3b>(i, j)[1]) {
+          vert.at<cv::Vec3b>(i, j) = _source.at<cv::Vec3b>(i, j);
+        } else {
+          horz.at<cv::Vec3b>(i, j) = _source.at<cv::Vec3b>(i, j);
+        }
+      }
+    }
+
+    vert_v << vert;
+    horz_v << horz;
   }
 }
 
@@ -364,6 +557,8 @@ void depth::processed_image::mouse_handle(int x, int y) {
   cv::Mat row = _adj_mat.row(pix);
   cv::Mat dst = create_bw();
   std::set<int> oth;
+
+  std::cout << pix << std::endl;
 
   for(int i = 0; i < row.cols; i++) {
     if(i != pix && row.at<unsigned char>(i)) {
@@ -405,156 +600,42 @@ cv::Mat depth::processed_image::create_bw() {
   return ret;
 }
 
-void depth::processed_image::comp_laws() {
+void depth::processed_image::comp_laws(cv::Mat source, int off) {
   std::vector<cv::Mat> masks = depth::laws();
-  cv::Mat source = cv::Mat::zeros(_source.size(), CV_64F);
   cv::Mat resp;
   cv::Mat disp;
-
-  std::transform(_source.begin<cv::Vec3b>(), _source.end<cv::Vec3b>(),
-      source.begin<double>(), [](cv::Vec3b p)
-      { return double(int(p[0]) + int(p[1]) + int(p[2])) / 255.0; } );
 
   for(int k = 0; k < masks.size(); k++) {
     cv::Mat kernel = masks[k];
     cv::filter2D(source, resp, -1, kernel);
 
     resp.copyTo(disp);
-    double min = *std::min_element(disp.begin<double>(), disp.end<double>());
-    double max = *std::max_element(disp.begin<double>(), disp.end<double>());
-    std::for_each(disp.begin<double>(), disp.end<double>(),
-        [&min, &max](double& d){ d = (d - min) / (max - min); });
+    double min = *std::min_element(disp.begin<float>(), disp.end<float>());
+    double max = *std::max_element(disp.begin<float>(), disp.end<float>());
+    std::for_each(disp.begin<float>(), disp.end<float>(),
+        [&min, &max] (float& d) { d = (d - min) / (max - min); });
 
     for(int i = 0; i < _source.rows; i++) {
       for(int j = 0; j < _source.cols; j++) {
-        _sps[_segment.at<int>(i, j)].laws_resp()[k] += disp.at<double>(i, j);
+        _sps[_segment.at<int>(i, j)].laws_resp()[off + k] += disp.at<float>(i, j);
       }
-    }
-  }
-
-  for(super_pixel& sp : _sps) {
-    for(double& d : sp.laws_resp()) {
-      d /= sp.n_pix();
     }
   }
 }
 
-void depth::processed_image::comp_grad() {
-  cv::Mat dx, dy, gray;
+void depth::processed_image::comp_grad(cv::Mat img, int off) {
+  cv::Mat dx, dy;
 
-  gray = cv::Mat::zeros(_source.size(), CV_64FC1);
-  std::transform(_source.begin<cv::Vec3b>(), _source.end<cv::Vec3b>(),
-      gray.begin<double>(), [](cv::Vec3b& pix)
-      { return (double(pix[0]) + double(pix[1]) + double(pix[2])) / 3.0; } );
-  cv::Sobel(gray, dx, -1, 1, 0);
-  cv::Sobel(gray, dy, -1, 0, 1);
+  cv::Sobel(img, dx, -1, 1, 0);
+  cv::Sobel(img, dy, -1, 0, 1);
 
   for(int i = 0; i < _source.rows; i++) {
     for(int j = 0; j < _source.cols; j++) {
-      int bucket = round(((atan(dy.at<double>(i, j) /
-          (dx.at<double>(i, j) + EPSILON)) + (PI / 2.0)) / PI) *
+      int bucket = round(((atan(dy.at<float>(i, j) /
+          (dx.at<float>(i, j) + EPSILON)) + (PI / 2.0)) / PI) *
           super_pixel::gra_buckets);
 
-      _sps[_segment.at<int>(i, j)].grad_hist()[bucket]++;
-    }
-  }
-
-  for(super_pixel& sp : _sps) {
-    for(double& d : sp.grad_hist()) {
-      d /= sp.n_pix();
+      _sps[_segment.at<int>(i, j)].grad_hist()[off + bucket]++;
     }
   }
 }
-
-/* ************************************************************************** */
-/* *** get lines ************************************************************ */
-/* ************************************************************************** */
-
-/*void depth::line::lines(depth::processed_image& img,
-    std::vector<super_pixel>& sps) {
-  cv::Mat gray;
-  cv::Mat dx, dy;
-  cv::Mat conv;
-  cv::Mat poss;
-  cv::Mat imcanny;
-  std::vector<cv::Mat>   objs;
-  std::vector<point_set> directions;
-
-  cv::cvtColor(img.source(), gray, CV_RGB2GRAY);
-  cv::GaussianBlur(gray, conv, cv::Size(7, 7), 1,5);
-  cv::Sobel(conv, dx, -1, 1, 0);
-  cv::Sobel(conv, dy, -1, 0, 1);
-
-  cv::Mat used = cv::Mat::zeros(imcanny.size(), CV_8UC1);
-  double min = sqrt((gray.rows * gray.rows) + (gray.cols * gray.cols)) * 0.01;
-
-  for(int i = 0; i < super_pixel::lin_buckets; i++)
-    directions.push_back(point_set());
-
-  for(int i = 0; i < imcanny.rows; i++) {
-    for(int j = 0; j < imcanny.cols; j++) {
-      if(imcanny.at<uc>(i, j)) {
-        int index = int(floor((
-            atan(dy.at<uc>(i, j) / (dx.at<uc>(i, j) + EPSILON)) + PI/2) /
-            PI * super_pixel::lin_buckets)) % super_pixel::lin_buckets;
-        directions[index].push_back(point(i, j));
-      }
-    }
-  }
-
-  for(int k = 0; k < super_pixel::lin_buckets; k++) {
-    std::vector<point_set> groups;
-    point_set possible;
-
-    poss = cv::Mat::zeros(imcanny.size(), CV_8UC1);
-    objs.clear();
-
-    if(k > 0)
-      append(possible, directions[k - 1].begin(), directions[k - 1].end());
-    if(k < super_pixel::lin_buckets - 1)
-      append(possible, directions[k + 1].begin(), directions[k + 1].end());
-    append(possible, directions[k].begin(), directions[k].end());
-
-    std::for_each(possible.begin(), possible.end(), [&poss](const point& curr)
-        { poss.at<uc>(curr.first, curr.second) = 255; } );
-
-    for(int i = 0; i < poss.rows; i++) {
-      for(int j = 0; j < poss.cols; j++) {
-        if(poss.at<uc>(i, j) && !used.at<uc>(i, j)) {
-          point_set set;
-          get_group(poss, point(i, j), set);
-          groups.push_back(set);
-        }
-      }
-    }
-
-    for(point_set& ps : groups) {
-      if(ps.size() > min && ps.size() < poss.rows * poss.cols) {
-        for(point p : ps) {
-          used.at<uc>(p.first, p.second) = 1;
-        }
-
-        point rel = ps[0];
-        sps[img.segment().at<int>(rel.first, rel.second)].hist_line()[k]++;
-        sps[img.segment().at<int>(rel.first, rel.second)].n_line()++;
-      }
-    }
-  }
-}
-
-void depth::line::get_group(cv::Mat& img, point curr, point_set& dst) {
-  dst.push_back(curr);
-
-  img.at<uc>(curr.first, curr.second) = 0;
-
-  int maxI = curr.first  < img.rows - 1 ? curr.first + 1  : img.rows - 1;
-  int maxJ = curr.second < img.cols - 1 ? curr.second + 1 : img.cols - 1;
-
-  for(int i = curr.first; i <= maxI; i++) {
-    for(int j = curr.second; j <= maxJ; j++) {
-      if(img.at<uc>(i, j)) {
-        get_group(img, point(i, j), dst);
-      }
-    }
-  }
-}*/

@@ -79,6 +79,13 @@ namespace depth {
     return *(begin + (diff/2));
   }
 
+  template<typename i1_t, typename i2_t, typename _func>
+  void comb(i1_t begin, i1_t end, i2_t alt, _func func) {
+    for(; begin != end; begin++, alt++) {
+      func(*begin, *alt);
+    }
+  }
+
   double v_sum(const std::vector<double>& vec);
   std::vector<double> v_pow(const std::vector<double>& vec, int pow);
   std::vector<double> operator*(const std::vector<double>& lhs,

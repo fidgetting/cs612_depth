@@ -13,6 +13,7 @@
 #include <iostream>
 #include <set>
 #include <vector>
+#include <memory>
 
 namespace depth {
 
@@ -28,20 +29,28 @@ namespace depth {
   class super_pixel {
     public:
 
-      const static int base = 9;
+#ifdef INC_COLORLOC
+      const static int base = 8;
       const static int hue_buckets = 5;
       const static int sat_buckets = 3;
+#else
+      const static int base = 0;
+      const static int hue_buckets = 0;
+      const static int sat_buckets = 0;
+#endif
+      const static int col_spaces = 3;
       const static int law_buckets = 9;
-      const static int gra_buckets = 10;
+      const static int gra_buckets = 18;
 
-      const static int n_dim = base + hue_buckets + sat_buckets + law_buckets
-          + gra_buckets;
+      const static int n_dim = base + hue_buckets + sat_buckets
+          + (law_buckets * col_spaces)
+          + (gra_buckets * col_spaces);
 
       super_pixel(const processed_image* src);
       super_pixel(const processed_image* src, int32_t _sp_num);
       virtual ~super_pixel() { }
 
-      void pack(cv::Mat& dst) const;
+      virtual void pack(cv::Mat& dst);
 
       inline int sp_num() const { return _sp_num; }
 
@@ -62,6 +71,8 @@ namespace depth {
       inline const std::vector<double>& laws_resp() const { return _laws_resp; }
       inline       std::vector<double>& grad_hist()       { return _grad_hist; }
       inline const std::vector<double>& grad_hist() const { return _grad_hist; }
+
+      inline const processed_image* source() const { return _src; }
 
     protected:
 
@@ -105,7 +116,10 @@ namespace depth {
 
       region(const processed_image* src);
 
+      virtual void pack(cv::Mat& dst);
+
       void push(const super_pixel& pix);
+      void clear();
 
     protected:
 
@@ -133,17 +147,23 @@ namespace depth {
   class processed_image {
     public:
 
+      processed_image();
+      processed_image(const cv::Mat& img);
       processed_image(const std::string& image_name);
 
       template<typename model_t>
-      void predict(std::shared_ptr<model_t> model);
+      void predict(const std::shared_ptr<model_t> model);
       template<typename model_t>
       cv::Mat pair(std::shared_ptr<model_t> model);
 
       void display(int delay = -1);
+      void write(cv::VideoWriter& vert_v, cv::VideoWriter& horz_v);
 
-      void comp_laws();
-      void comp_grad();
+      template<typename _func_t>
+      void comp_channel(_func_t func, int off);
+
+      void comp_laws(cv::Mat img, int off);
+      void comp_grad(cv::Mat img, int off);
 
       inline bool valid() { return _source.data != NULL; }
 
@@ -186,22 +206,73 @@ namespace depth {
   /* *** TODO NEEDS WORK **************************************************** */
   /* ************************************************************************ */
 
+  template<typename _func_t>
+  void processed_image::comp_channel(_func_t func, int off) {
+    cv::Mat src = cv::Mat::zeros(_source.size(), CV_32FC3);
+    cv::Mat R   = cv::Mat::zeros(src.size(), CV_32FC1);
+    cv::Mat G  = cv::Mat::zeros(src.size(), CV_32FC1);
+    cv::Mat B  = cv::Mat::zeros(src.size(), CV_32FC1);
+    cv::Mat Hue = cv::Mat::zeros(src.size(), CV_32FC1);
+    cv::Mat Sat = cv::Mat::zeros(src.size(), CV_32FC1);
+    cv::Mat dst;
+
+    std::transform(_source.begin<cv::Vec3b>(), _source.end<cv::Vec3b>(),
+        src.begin<cv::Vec3f>(), [] (cv::Vec3b& in)
+        { return cv::Vec3f(in[0] / 255.0, in[1]/255.0, in[2]/255.0); } );
+
+    std::transform(src.begin<cv::Vec3f>(), src.end<cv::Vec3f>(),
+        R.begin<float>(), [] (cv::Vec3f& in) { return in[0]; } );
+    std::transform(src.begin<cv::Vec3f>(), src.end<cv::Vec3f>(),
+        G.begin<float>(), [] (cv::Vec3f& in) { return in[1]; } );
+    std::transform(src.begin<cv::Vec3f>(), src.end<cv::Vec3f>(),
+        B.begin<float>(), [] (cv::Vec3f& in) { return in[2]; } );
+
+    /*cv::cvtColor(src, dst, CV_RGB2HSV);
+    std::transform(dst.begin<cv::Vec3f>(), dst.end<cv::Vec3f>(),
+        Hue.begin<float>(), [] (cv::Vec3f& in) { return in[0]; } );
+    std::transform(dst.begin<cv::Vec3f>(), dst.end<cv::Vec3f>(),
+        Sat.begin<float>(), [] (cv::Vec3f& in) { return in[1]; } );*/
+
+    func(R,   off * 0);
+    func(G,   off * 1);
+    func(B,   off * 2);
+    //func(Hue, off * 0);
+    //func(Sat, off * 1);
+
+    for(super_pixel& sp : _sps)
+      for(double& d : sp.laws_resp())
+        d /= sp.n_pix();
+    for(super_pixel& sp : _sps)
+      for(double& d : sp.grad_hist())
+        d /= sp.n_pix();
+  }
+
   /**
    * TODO
    *
    * @param model
    */
   template<typename model_t>
-  void processed_image::predict(std::shared_ptr<model_t> model) {
+  void processed_image::predict(const std::shared_ptr<model_t> model) {
     cv::Mat input(1, super_pixel::n_dim, CV_32FC1);
     std::map<int, int> labels;
+    region re(this);
 
     for(int i = 0; i < npixels(); i++) {
-      super_pixel pix(this, i);
+      re.clear();
 
-      pix.pack(input);
-      std::cout << i << " => ";
+      re.push(_sps[i]);
+      for(int j = 0; j < npixels(); j++) {
+        if(_adj_mat.at<uint8_t>(i, j)) {
+          re.push(_sps[j]);
+        }
+      }
+
+      re.pack(input);
+
+      //std::cout << i << " => ";
       labels[i] = int(model->predict(input));
+      //std::cout << " => " << labels[i] << std::endl;
     }
 
     for(int i = 0; i < _source.rows; i++) {
@@ -211,11 +282,11 @@ namespace depth {
             _spimg.at<cv::Vec3b>(i, j) = cv::Vec3b(0, 0, 0);
             break;
 
-          case 1:
+          case -1:
             _spimg.at<cv::Vec3b>(i, j) = cv::Vec3b(255, 0, 0);
             break;
 
-          case 2:
+          case 1:
             _spimg.at<cv::Vec3b>(i, j) = cv::Vec3b(0, 255, 0);
             break;
 

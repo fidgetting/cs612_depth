@@ -87,7 +87,7 @@ void depth::knearest::save(std::string filename, std::string name) {
   cvEndWriteStruct(store);
 }
 
-float depth::knearest::predict(cv::Mat& point) {
+float depth::knearest::predict(cv::Mat& point) const {
   std::vector<std::pair<int, double> > best;
   std::vector<uint8_t> nfound(_n, 0);
   double dist;
@@ -116,11 +116,10 @@ float depth::knearest::predict(cv::Mat& point) {
   }
 
   for(std::pair<int, double>& curr : best) {
-    std::cout << "[" << curr.first << ", " << curr.second << ", "
-        << _resp.at<int32_t>(curr.first) << "] ";
+    /*std::cout << "[" << curr.first << ", " << curr.second << ", "
+        << _resp.at<int32_t>(curr.first) << "] ";*/
     nfound[_resp.at<int32_t>(curr.first)]++;
   }
-  std::cout << std::endl;
 
   for(int i = 1; i < nfound.size(); i++) {
     if(nfound[i] > nfound[max]) {

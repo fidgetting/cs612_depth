@@ -27,7 +27,7 @@ namespace po = boost::program_options;
 namespace fs = boost::filesystem;
 #include <boost/timer.hpp>
 
-#define MODEL_R depth::knearest
+#define MODEL_R CvBoost
 #define MODEL_P depth::knearest
 
 int main(int argc, char** argv) {
@@ -45,11 +45,15 @@ int main(int argc, char** argv) {
   bool m_truth = false;
 
   /* parameters for the region classifier */
-  CvSVMParams   region_p;
+  /*CvSVMParams   region_p;
 
   region_p.kernel_type = CvSVM::RBF;
   region_p.degree = pow(2,  5);
-  region_p.C      = pow(2, -5);
+  region_p.C      = pow(2, -5);*/
+  CvBoostParams region_p;
+
+  region_p.boost_type     = CvBoost::DISCRETE;
+  region_p.split_criteria = CvBoost::DEFAULT;
 
   /* parameters for paired classifier */
   CvBoostParams pair_p;
@@ -156,43 +160,42 @@ int main(int argc, char** argv) {
     m_pair->load(pair_f.c_str(), "pair");
   }
 
-  /*if(directory.size() != 0) {
+  if(directory.size() != 0) {
     for(auto iter = fs::directory_iterator(directory);
         iter != fs::directory_iterator(); iter++) {
+      std::cout << (*iter).path() << std::endl;
       depth::processed_image pi((*iter).path().c_str());
 
-      pi.display(-1);
-    }
-  }*/
-
-  if(file_list.size() != 0) {
-    for(std::string& str : file_list) {
-      depth::processed_image pi(str);
-
       pi.predict(m_region);
-      //pi.pair(m_pair);
       pi.display();
     }
   }
 
-  /*for(std::string& str : video_list) {
+  if(file_list.size() != 0) {
+    for(std::string& str : file_list) {
+      std::cout << str << std::endl;
+      depth::processed_image pi(str);
+
+      pi.predict(m_region);
+      pi.display();
+    }
+  }
+
+  for(std::string& str : video_list) {
     cv::Mat src;
     cv::VideoCapture vid(str);
+
     cv::Size frame_size(
         vid.get(CV_CAP_PROP_FRAME_HEIGHT),
         vid.get(CV_CAP_PROP_FRAME_WIDTH));
 
-    cv::VideoWriter out("output.avi",
-        CV_FOURCC('D', 'I', 'V', 'X'),
-        vid.get(CV_CAP_PROP_FPS),
-        frame_size);
+    while(vid.read(src)) {
+      depth::processed_image pi(src);
 
-
-
-    for(boost::thread&t : workers) {
-      t.join();
+      pi.predict(m_region);
+      pi.display(100);
     }
-  }*/
+  }
 
   return 0;
 }
