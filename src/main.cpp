@@ -136,28 +136,16 @@ int main(int argc, char** argv) {
     }
   }
 
-  fs::path region_f(model.substr(0, model.find(':')));
-  fs::path pair_f(model.substr(model.find(':') + 1));
-
   if(samples.size() != 0) {
     std::cout << "\nTRAINING: region" << std::flush;
     watch.restart();
     m_region = depth::train_region<MODEL_R>(samples, region_p);
-    m_region->save(region_f.c_str(), "region");
+    m_region->save(model.c_str(), "region");
     std::cout << " " << watch.elapsed() << std::endl;
-
-    std::cout << "TRAINING: pair" << std::flush;
-    watch.restart();
-    m_pair = depth::train_pair<MODEL_P>(samples, pair_p);
-    m_pair->save(pair_f.c_str(), "pair");
-    std::cout << " " << watch.elapsed() << "\n" << std::endl;
 
   } else {
     m_region = std::make_shared<MODEL_R>();
-    m_region->load(region_f.c_str(), "region");
-
-    m_pair = std::make_shared<MODEL_P>();
-    m_pair->load(pair_f.c_str(), "pair");
+    m_region->load(model.c_str(), "region");
   }
 
   if(directory.size() != 0) {
@@ -184,16 +172,23 @@ int main(int argc, char** argv) {
   for(std::string& str : video_list) {
     cv::Mat src;
     cv::VideoCapture vid(str);
+    int frame = 1;
 
     cv::Size frame_size(
         vid.get(CV_CAP_PROP_FRAME_HEIGHT),
         vid.get(CV_CAP_PROP_FRAME_WIDTH));
 
     while(vid.read(src)) {
+      watch.restart();
       depth::processed_image pi(src);
 
       pi.predict(m_region);
       pi.display(100);
+      std::cout << "[" << frame << ", " << watch.elapsed() << "] "
+          << std::flush;
+      if((frame++) % 10 == 0) {
+        std::cout << std::endl;
+      }
     }
   }
 

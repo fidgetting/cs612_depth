@@ -77,6 +77,14 @@ namespace depth {
 
     for(const std::shared_ptr<ground_truth>& g : train_data) {
       for(super_pixel& sp : g->get_img()->sps()) {
+        int type = g->at(sp.sp_num());
+        respo_mat.at<int>(curr_row) =
+            type == 0 || type == 1 ? -1 : 1;
+
+        cv::Mat row = train_mat.row(curr_row++);
+
+#ifdef USE_REGION
+
         depth::region re(g->get_img().get());
 
         re.push(sp);
@@ -88,13 +96,10 @@ namespace depth {
           }
         }
 
-        int type = g->at(sp.sp_num());
-        respo_mat.at<int>(curr_row) =
-            type == 0 || type == 1 ? -1 : 1;
-
-        cv::Mat row = train_mat.row(curr_row++);
-
         re.pack(row);
+#else
+        sp.pack(row);
+#endif
       }
     }
 

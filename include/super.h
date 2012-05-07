@@ -259,6 +259,7 @@ namespace depth {
     region re(this);
 
     for(int i = 0; i < npixels(); i++) {
+#ifdef USE_REGION
       re.clear();
 
       re.push(_sps[i]);
@@ -269,6 +270,9 @@ namespace depth {
       }
 
       re.pack(input);
+#else
+      _sps[i].pack(input);
+#endif
 
       //std::cout << i << " => ";
       labels[i] = int(model->predict(input));

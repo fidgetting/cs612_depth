@@ -463,17 +463,6 @@ depth::processed_image::processed_image(const std::string& image_name) :
 void depth::processed_image::display(int delay) {
   if(valid()) {
 
-    //cv::namedWindow("mixed", CV_WINDOW_AUTOSIZE);
-    /*cv::namedWindow("segment", CV_WINDOW_AUTOSIZE);
-    cv::namedWindow("bw"     , CV_WINDOW_AUTOSIZE);
-    cvSetMouseCallback("segment", processed_image::mouse_callback, this);
-    cvSetMouseCallback("bw",      processed_image::mouse_callback, this);
-
-    cv::imshow("source",  _source);
-    cv::imshow("segment", _spimg);
-    cv::imshow("bw",      create_bw());
-    cv::imshow("adj",     _adj_mat);*/
-
     cv::Mat vert = cv::Mat::zeros(_source.size(), CV_8UC3);
     cv::Mat horz = cv::Mat::zeros(_source.size(), CV_8UC3);
 
@@ -490,6 +479,10 @@ void depth::processed_image::display(int delay) {
     cv::imshow("vertical", vert);
     cv::imshow("horizontal", horz);
     cv::imshow("source", _source);
+
+    cv::imwrite("horz.png", horz);
+    cv::imwrite("vert.png", vert);
+    cv::imwrite("comb.png", _source);
 
     cv::waitKey(delay);
   }
