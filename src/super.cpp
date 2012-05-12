@@ -30,10 +30,8 @@ bool operator<(std::pair<int, int> lhs, std::pair<int, int> rhs) {
 }
 
 depth::super_pixel::super_pixel(const processed_image* src) :
-    _src(src), _sp_num(-1), _n_pix(0), _mean_r(0), _mean_g(0), _mean_b(0),
-    _mean_hue(0), _mean_sat(0), _hist_hue(hue_buckets), _hist_sat(sat_buckets),
-    _mean_x(0), _mean_y(0), _laws_resp(law_buckets * col_spaces),
-    _grad_hist(gra_buckets * col_spaces) { }
+    _src(src), _sp_num(-1), _n_pix(0), _laws_resp(law_buckets * col_spaces),
+    _grad_hist(gra_buckets * col_spaces), _label(0) { }
 
 /**
  * TODO
@@ -42,60 +40,11 @@ depth::super_pixel::super_pixel(const processed_image* src) :
  * @param sp_num
  */
 depth::super_pixel::super_pixel(const processed_image* src, int32_t sp_num) :
-    _src(src), _sp_num(sp_num), _n_pix(0), _mean_r(0), _mean_g(0), _mean_b(0),
-    _mean_hue(0), _mean_sat(0), _hist_hue(hue_buckets), _hist_sat(sat_buckets),
-    _mean_x(0), _mean_y(0), _laws_resp(law_buckets * col_spaces),
-    _grad_hist(gra_buckets * col_spaces) {
+    _src(src), _sp_num(sp_num), _n_pix(0), _laws_resp(law_buckets * col_spaces),
+    _grad_hist(gra_buckets * col_spaces), _label(0) {
 
   std::for_each(_src->segment().begin<int>(), _src->segment().end<int>(),
       [&](int i){ if(i == _sp_num) _n_pix++; });
-#ifdef INC_COLORLOC
-  /* do the easy stuff first:
-   *   mean      red, green, blue
-   *   mean      hue, saturation
-   *   mean      x, y
-   *   histogram hue, saturation
-   */
-  double _row_norm = 1.0 / double(_src->rows());
-  double _col_norm = 1.0 / double(_src->cols());
-
-  cv::Mat hsv(_src->source().size(), CV_8UC3);
-  cv::cvtColor(_src->source(), hsv, CV_RGB2HSV);
-
-  for(int i = 0; i < _src->rows(); i++) {
-    for(int j = 0; j < _src->cols(); j++) {
-      if(_src->segment().at<int>(i, j) == _sp_num) {
-        _mean_x += j;
-        _mean_y += j;
-
-        _mean_r += _src->source().at<cv::Vec3b>(i, j)[0];
-        _mean_g += _src->source().at<cv::Vec3b>(i, j)[1];
-        _mean_b += _src->source().at<cv::Vec3b>(i, j)[2];
-
-        _mean_hue += hsv.at<cv::Vec3b>(i, j)[0];
-        _mean_sat += hsv.at<cv::Vec3b>(i, j)[1];
-        double hue = (hsv.at<cv::Vec3b>(i, j)[0] / 256.0) * hue_buckets;
-        double sat = (hsv.at<cv::Vec3b>(i, j)[1] / 256.0) * sat_buckets;
-
-        _hist_hue[int(floor(hue))]++;
-        _hist_sat[int(floor(sat))]++;
-      }
-    }
-  }
-
-  _mean_x /= _n_pix;
-  _mean_y /= _n_pix;
-
-  _mean_r /= _n_pix;
-  _mean_g /= _n_pix;
-  _mean_b /= _n_pix;
-
-  _mean_hue /= _n_pix;
-  _mean_sat /= _n_pix;
-
-  for(double& d : _hist_hue) d /= _n_pix;
-  for(double& d : _hist_sat) d /= _n_pix;
-#endif
 }
 
 /**
@@ -104,32 +53,32 @@ depth::super_pixel::super_pixel(const processed_image* src, int32_t sp_num) :
  * @param row
  */
 void depth::super_pixel::pack(cv::Mat& row) {
-  int idx = base;
+  int idx = 0;
 
   if(row.rows != 1 || row.cols != n_dim) {
     throw std::exception();
   }
 
-#ifdef INC_COLORLOC
-  //row.at<float>(0 ) = _n_pix;
-  row.at<float>(1 ) = _mean_r;
-  row.at<float>(2 ) = _mean_g;
-  row.at<float>(3 ) = _mean_b;
-  row.at<float>(4 ) = _mean_x;
-  row.at<float>(5 ) = _mean_y;
-  row.at<float>(6 ) = _mean_hue;
-  row.at<float>(7 ) = _mean_sat;
-
-  for(int i = 0; i < hue_buckets; i++)
-    row.at<float>(idx++) = _hist_hue[i];
-  for(int i = 0; i < sat_buckets; i++)
-    row.at<float>(idx++) = _hist_sat[i];
-#endif
-
   for(int i = 0; i < law_buckets; i++)
     row.at<float>(idx++) = _laws_resp[i];
   for(int i = 0; i < gra_buckets; i++)
     row.at<float>(idx++) = _grad_hist[i];
+}
+
+/**
+ * TODO
+ *
+ * @param dst
+ * @param sp
+ */
+void depth::super_pixel::pack_with(cv::Mat& dst, super_pixel& sp) {
+  cv::Mat alt = cv::Mat::zeros(dst.size(), CV_32FC1);
+
+  pack(dst);
+  sp.pack(alt);
+
+  comb(dst.begin<float>(), dst.end<float>(), alt.begin<float>(),
+      [] (float& _d, float& _a) { _d = abs(_d - _a); });
 }
 
 /**
@@ -143,54 +92,6 @@ bool depth::operator <(const depth::super_pixel& lhs,
     const depth::super_pixel& rhs) {
   return lhs.sp_num() < rhs.sp_num();
 }
-
-/**
- * TODO
- *
- * @param ostr
- * @param pix
- * @return
- */
-#define printf_vec(ostr, vec)                                 \
-    ostr << #vec << "[";                                      \
-    for(auto iter = vec.begin(); iter != vec.end(); iter++) { \
-      ostr << std::setw(6) << std::right << *iter;            \
-      if(iter != pix.hist_hue().end() - 1) {                  \
-        ostr << ", ";                                         \
-      }                                                       \
-    }                                                         \
-    ostr << "] "
-
-/**
- * TODO
- *
- * @param ostr
- * @param pix
- * @return
- */
-std::ostream& depth::operator<<(std::ostream& ostr, const super_pixel& pix) {
-  ostr << std::fixed
-       << std::setfill(' ')
-       << std::setprecision(3);
-
-  ostr << "size: " << std::setw(6) << std::right << pix.n_pix() <<
-          " rgb["  << pix.mean_r()   <<
-          ", "     << pix.mean_g()   <<
-          ", "     << pix.mean_b()   <<
-          "] hs["  << pix.mean_hue() <<
-          ", "     << pix.mean_sat() << "] ";
-
-  printf_vec(ostr, pix.hist_hue());
-  printf_vec(ostr, pix.hist_sat());
-
-  ostr << " xy[" << pix.mean_x() << ", " << pix.mean_y() << "] ";
-
-  printf_vec(ostr, pix.laws_resp());
-
-  return ostr;
-}
-
-#undef printf_vec
 
 /* ************************************************************************** */
 /* *** region *************************************************************** */
@@ -210,15 +111,6 @@ depth::region::region(const processed_image* src) :
  * @param dst
  */
 void depth::region::pack(cv::Mat& dst) {
-  /* zero everything */
-  _mean_r = _mean_g = _mean_b = 0;
-  _mean_x = _mean_y = 0;
-  _mean_hue = _mean_sat = 0;
-
-  std::for_each(_hist_hue.begin(),  _hist_hue.end(),
-      [] (double& d) { d = 0; } );
-  std::for_each(_hist_sat.begin(),  _hist_sat.end(),
-      [] (double& d) { d = 0; } );
   std::for_each(_laws_resp.begin(), _laws_resp.end(),
       [] (double& d) { d = 0; } );
   std::for_each(_grad_hist.begin(), _grad_hist.end(),
@@ -226,21 +118,6 @@ void depth::region::pack(cv::Mat& dst) {
 
   /* add up everything for average */
   for(super_pixel& sp : _subs) {
-#ifdef INC_COLORLOV
-    _mean_r += sp.mean_r();
-    _mean_g += sp.mean_g();
-    _mean_b += sp.mean_b();
-    _mean_hue += sp.mean_hue();
-    _mean_sat += sp.mean_sat();
-    _mean_x += sp.mean_x();
-    _mean_y += sp.mean_y();
-
-    comb(sp.hist_hue().begin(), sp.hist_hue().end(), _hist_hue.begin(),
-        [] (const double& src, double& dst) { dst += src; } );
-    comb(sp.hist_sat().begin(), sp.hist_sat().end(), _hist_sat.begin(),
-        [] (const double& src, double& dst) { dst += src; } );
-#endif
-
     comb(sp.laws_resp().begin(), sp.laws_resp().end(), _laws_resp.begin(),
         [] (const double& src, double& dst) { dst += src; } );
     comb(sp.grad_hist().begin(), sp.grad_hist().end(), _grad_hist.begin(),
@@ -250,18 +127,6 @@ void depth::region::pack(cv::Mat& dst) {
   }
 
   /* divide through by the number of pixels */
-  _mean_r   /= _subs.size();
-  _mean_g   /= _subs.size();
-  _mean_b   /= _subs.size();
-  _mean_hue /= _subs.size();
-  _mean_sat /= _subs.size();
-  _mean_x   /= _subs.size();
-  _mean_y   /= _subs.size();
-
-  std::for_each(_hist_hue.begin(),  _hist_hue.end(),
-      [&](double& d){ d /= _subs.size(); } );
-  std::for_each(_hist_sat.begin(),  _hist_sat.end(),
-      [&](double& d){ d /= _subs.size(); } );
   std::for_each(_laws_resp.begin(), _laws_resp.end(),
       [&](double& d){ d /= _subs.size(); } );
   std::for_each(_grad_hist.begin(), _grad_hist.end(),

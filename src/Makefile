@@ -16,14 +16,12 @@ LIBS    = `pkg-config opencv --libs` \
 OBJS = $(BIN_DIR)/main.o     \
        $(BIN_DIR)/util.o     \
        $(BIN_DIR)/super.o    \
-       $(BIN_DIR)/ground.o   \
-       $(BIN_DIR)/knearest.o
+       $(BIN_DIR)/ground.o
 
 HEAD = Makefile              \
        $(INC_DIR)/util.h     \
        $(INC_DIR)/super.h    \
-       $(INC_DIR)/ground.h   \
-       $(INC_DIR)/knearest.h
+       $(INC_DIR)/ground.h
 
 all: $(BIN_DIR) $(EXE)
 $(EXE): $(OBJS) $(BIN_DIR)/*.o $(HEAD)

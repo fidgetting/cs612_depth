@@ -9,7 +9,6 @@
 #include <ground.h>
 #include <super.h>
 #include <util.h>
-#include <knearest.h>
 
 /* std library */
 #include <fstream>
@@ -28,7 +27,7 @@ namespace fs = boost::filesystem;
 #include <boost/timer.hpp>
 
 #define MODEL_R CvBoost
-#define MODEL_P depth::knearest
+#define MODEL_P CvBoost
 
 int main(int argc, char** argv) {
   std::vector<std::string> file_list;
@@ -136,16 +135,28 @@ int main(int argc, char** argv) {
     }
   }
 
+  fs::path region_path(model.substr(0, model.find(':')));
+  fs::path pair_path  (model.substr(model.find(':') + 1));
+
   if(samples.size() != 0) {
     std::cout << "\nTRAINING: region" << std::flush;
     watch.restart();
     m_region = depth::train_region<MODEL_R>(samples, region_p);
-    m_region->save(model.c_str(), "region");
+    m_region->save(region_path.c_str(), "region");
+    std::cout << " " << watch.elapsed() << std::endl;
+
+    std::cout << "TRAINING: pair" << std::flush;
+    watch.restart();
+    m_pair = depth::train_pair<MODEL_R>(samples, pair_p);
+    m_pair->save(pair_path.c_str(), "pair");
     std::cout << " " << watch.elapsed() << std::endl;
 
   } else {
     m_region = std::make_shared<MODEL_R>();
-    m_region->load(model.c_str(), "region");
+    m_region->load(region_path.c_str(), "region");
+
+    m_pair = std::make_shared<MODEL_P>();
+    m_pair->load(pair_path.c_str(), "pair");
   }
 
   if(directory.size() != 0) {

@@ -29,43 +29,23 @@ namespace depth {
   class super_pixel {
     public:
 
-#ifdef INC_COLORLOC
-      const static int base = 8;
-      const static int hue_buckets = 5;
-      const static int sat_buckets = 3;
-#else
-      const static int base = 0;
-      const static int hue_buckets = 0;
-      const static int sat_buckets = 0;
-#endif
       const static int col_spaces = 3;
       const static int law_buckets = 9;
       const static int gra_buckets = 18;
 
-      const static int n_dim = base + hue_buckets + sat_buckets
-          + (law_buckets * col_spaces)
-          + (gra_buckets * col_spaces);
+      const static int n_dim = (law_buckets * col_spaces)
+              + (gra_buckets * col_spaces);
 
       super_pixel(const processed_image* src);
       super_pixel(const processed_image* src, int32_t _sp_num);
       virtual ~super_pixel() { }
 
       virtual void pack(cv::Mat& dst);
+      virtual void pack_with(cv::Mat& dst, super_pixel& sp);
 
       inline int sp_num() const { return _sp_num; }
 
       inline    int n_pix()    const { return _n_pix;    }
-      inline double mean_r()   const { return _mean_r;   }
-      inline double mean_g()   const { return _mean_g;   }
-      inline double mean_b()   const { return _mean_b;   }
-      inline double mean_hue() const { return _mean_hue; }
-      inline double mean_sat() const { return _mean_sat; }
-
-      inline const std::vector<double>& hist_hue() const { return _hist_hue; }
-      inline const std::vector<double>& hist_sat() const { return _hist_sat; }
-
-      inline double mean_x() const { return _mean_x; }
-      inline double mean_y() const { return _mean_y; }
 
       inline       std::vector<double>& laws_resp()       { return _laws_resp; }
       inline const std::vector<double>& laws_resp() const { return _laws_resp; }
@@ -73,6 +53,9 @@ namespace depth {
       inline const std::vector<double>& grad_hist() const { return _grad_hist; }
 
       inline const processed_image* source() const { return _src; }
+
+      inline double& label()       { return _label; }
+      inline double  label() const { return _label; }
 
     protected:
 
@@ -82,30 +65,17 @@ namespace depth {
 
       /* color */
       double           _n_pix;
-      double           _mean_r;
-      double           _mean_g;
-      double           _mean_b;
-      double           _mean_hue;
-      double           _mean_sat;
-      std::vector<double> _hist_hue;
-      std::vector<double> _hist_sat;
-
-      /* textures: DOOG filters */
-      // TODO
-
-      /* location and shape */
-      double           _mean_x;
-      double           _mean_y;
 
       /* geometry */
       std::vector<double> _laws_resp;
       std::vector<double> _grad_hist;
+
+      /* the final label of the super pixel */
+      double _label;
   };
 
   std::set<super_pixel> get_super(processed_image& src);
   bool operator<(const super_pixel& lhs, const super_pixel& rhs);
-
-  std::ostream& operator<<(std::ostream& ostr, const super_pixel& pix);
 
   /* ************************************************************************ */
   /* *** region ************************************************************* */
@@ -120,6 +90,9 @@ namespace depth {
 
       void push(const super_pixel& pix);
       void clear();
+
+      inline       std::vector<super_pixel>& subs()       { return _subs; }
+      inline const std::vector<super_pixel>& subs() const { return _subs; }
 
     protected:
 
@@ -153,8 +126,10 @@ namespace depth {
 
       template<typename model_t>
       void predict(const std::shared_ptr<model_t> model);
-      template<typename model_t>
-      cv::Mat pair(std::shared_ptr<model_t> model);
+
+      template<typename region_t, typename pair_t>
+      void pair(const std::shared_ptr<region_t> region,
+          const std::shared_ptr<pair_t> pair);
 
       void display(int delay = -1);
       void write(cv::VideoWriter& vert_v, cv::VideoWriter& horz_v);
@@ -303,33 +278,85 @@ namespace depth {
   }
 
   /**
-   * Gets a matrix of pair-wise super pixel likelihoods
+   * TODO
    *
    * @param model
    */
-  template<typename model_t>
-  cv::Mat processed_image::pair(std::shared_ptr<model_t> model) {
-    cv::Mat input(1, super_pixel::n_dim * 2, CV_32FC1);
-    cv::Mat a_in = input.colRange(0, super_pixel::n_dim);
-    cv::Mat b_in = input.colRange(super_pixel::n_dim, super_pixel::n_dim * 2);
-    cv::Mat pair_wise(npixels(), npixels(), CV_64F);
+  template<typename region_t, typename pair_t>
+  void processed_image::pair(const std::shared_ptr<region_t> m_region,
+      const std::shared_ptr<pair_t> m_pair) {
+    const static int repeat = 10;
 
-    for(int i = 0; i < _sps.size() - 1; i++) {
-      for(int j = i + 1; j < _sps.size(); j++) {
-        if(_adj_mat.at<uc>(i, j)) {
-          _sps[i].pack(a_in);
-          _sps[j].pack(b_in);
+    cv::Mat input(1, super_pixel::n_dim, CV_32FC1);
+    std::vector<super_pixel> ran_sps(_sps);
+    std::vector<int> npregion = {3, 4, 5, 7, 9, 11, 15, 20, 25};
 
-          pair_wise.at<double>(i, j) =
-              pair_wise.at<double>(j, i) =
-                  model->predict(input);
-          std::cout << pair_wise.at<double>(i, j) << " " << std::flush;
+    region* best;
+    double best_f, sum;
+    int np_sum = 0;
+
+    std::for_each(npregion.begin(), npregion.end(),
+        [&np_sum](int& i) { np_sum += i; } );
+
+    /* begin by placing the super pixels in regions */
+    for(int& np : npregion) {
+      for(int i = 0; i < repeat; i++) {
+        std::vector<region> regions(np, this);
+        std::random_shuffle(ran_sps.begin(), ran_sps.end());
+
+        auto iter = ran_sps.begin();
+        for(region& re : regions) {
+          re.push(*(iter++));
+        }
+
+        for(; iter != ran_sps.end(); iter++) {
+          best_f = 0;
+          best = NULL;
+
+          for(region& re : regions) {
+            re.pack_with(input, *iter);
+
+            sum = m_pair->predict(input, cv::Mat(), cv::Range::all(),
+                false, true);
+
+            if(best == NULL || sum > best_f) {
+              best = &re;
+              best_f = sum;
+            }
+          }
+
+          best->push(*iter);
+        }
+
+        for(region& re : regions) {
+          re.pack(input);
+          sum = m_region->predict(input, cv::Mat(), cv::Range::all(),
+              false, true);
+
+          for(super_pixel& sp : re.subs()) {
+            _sps[sp.sp_num()].label() += sum;
+          }
         }
       }
     }
 
-    std::cout << std::endl;
-    return pair_wise;
+    for(super_pixel& sp : _sps) {
+      sp.label() /= double(np_sum);
+
+      int assign = m_region;
+    }
+
+    for(super_pixel& sp : _sps) {
+      std::cout << sp.sp_num() << "[" << sp.label() << ", " <<
+          (sp.label() < 0 ? "horz" : "vert") << "]" << std::endl;
+    }
+
+    for(int i = 0; i < _source.rows; i++) {
+      for(int j = 0; j < _source.cols; j++) {
+        _spimg.at<cv::Vec3b>(i, j) = _sps[_segment.at<int>(i, j)] < 0 ?
+            cv::Vec3b(255, 0, 0) : cv::Vec3b(0, 255, 0);
+      }
+    }
   }
 }
 

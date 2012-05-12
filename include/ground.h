@@ -52,8 +52,6 @@ namespace depth {
       std::vector<label> _labels;
   };
 
-#define KNEAR 1
-
   /**
    * TODO
    *
@@ -83,31 +81,13 @@ namespace depth {
 
         cv::Mat row = train_mat.row(curr_row++);
 
-#ifdef USE_REGION
-
-        depth::region re(g->get_img().get());
-
-        re.push(sp);
-        for(int i = 0; i < g->get_img()->npixels(); i++) {
-          if(g->get_img()->adj_mat().at<uint8_t>(sp.sp_num(), i)) {
-            if(g->at(sp.sp_num()) == g->at(i)) {
-              re.push(g->get_img()->sps()[i]);
-            }
-          }
-        }
-
-        re.pack(row);
-#else
         sp.pack(row);
-#endif
       }
     }
 
     CvMat train = train_mat;
     CvMat respo = respo_mat;
 
-    /*return std::shared_ptr<model_t>(
-        new model_t(train_mat, respo_mat, KNEAR));*/
     return std::shared_ptr<model_t>(
         new model_t(&train, CV_ROW_SAMPLE, &respo, 0, 0, 0, 0, params));
   }
@@ -127,13 +107,7 @@ namespace depth {
 
     for(const std::shared_ptr<ground_truth>& g : train_data) {
       int npix = g->get_img()->npixels();
-      /*int curr_img = 0;
 
-      std::for_each(g->get_img()->adj_mat().begin<uc>(),
-          g->get_img()->adj_mat().end<uc>(),
-          [&](uc c){ if(c) curr_img++; } );
-
-      total_samples += (curr_img / 2);*/
       for(int i = 0; i < npix - 1; i++) {
         for(int j = i + 1; j < npix; j++) {
           if(g->get_img()->adj_mat().at<uc>(i, j)) {
@@ -143,7 +117,7 @@ namespace depth {
       }
     }
 
-    cv::Mat train_mat(total_samples, depth::super_pixel::n_dim * 2, CV_32FC1);
+    cv::Mat train_mat(total_samples, depth::super_pixel::n_dim, CV_32FC1);
     cv::Mat respo_mat(total_samples, 1, CV_32SC1);
 
     for(const std::shared_ptr<ground_truth>& g : train_data) {
@@ -157,11 +131,7 @@ namespace depth {
                 (g->at(pix[i].sp_num()) == g->at(pix[j].sp_num())) ? 1 : -1;
 
             cv::Mat row = train_mat.row(curr_row++);
-            cv::Mat i_mat = row.colRange(0, super_pixel::n_dim);
-            cv::Mat j_mat = row.colRange(super_pixel::n_dim, row.cols);
-
-            pix[i].pack(i_mat);
-            pix[j].pack(j_mat);
+            pix[i].pack_with(row, pix[j]);
           }
         }
       }
@@ -171,10 +141,8 @@ namespace depth {
     CvMat respo = respo_mat;
 
     return std::shared_ptr<model_t>(
-        new model_t(train_mat, respo_mat, KNEAR));
-    /*return std::shared_ptr<model_t>(
         new model_t(&train, CV_ROW_SAMPLE, &respo, NULL, NULL, NULL, NULL,
-            params));*/
+            params));
   }
 }
 
