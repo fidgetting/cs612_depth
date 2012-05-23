@@ -24,11 +24,13 @@ namespace depth {
   class ground_truth {
     public:
 
+      const static int margin;
+
       enum label {
-        unlabled = 0,
-        ground = 1,
+        none     = 0,
+        ground   = 1,
         vertical = 2,
-        sky = 3
+        sky      = 3
       };
 
       ground_truth(std::shared_ptr<processed_image> img);
@@ -45,11 +47,14 @@ namespace depth {
 
       static void mouse_callback(int event, int x, int y, int flags, void* im);
 
-      void mouse_handle(int x, int y);
-      void paint_ground(cv::Mat& dst, cv::Mat& simp);
+      void mouse_handle(int x, int y, int type);
+      void paint_ground(cv::Mat& dst, cv::Mat& oth, cv::Mat& src);
 
       std::shared_ptr<processed_image> img;
-      std::vector<label> _labels;
+
+      std::vector<cv::Point>     _lines;
+      std::map<cv::Point, label> _points;
+      std::vector<label>         _labels;
   };
 
   /**
@@ -145,6 +150,8 @@ namespace depth {
             params));
   }
 }
+
+bool operator<(cv::Point& lhs, cv::Point& rhs);
 
 
 
